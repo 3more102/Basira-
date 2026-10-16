@@ -81,3 +81,16 @@ Basira is a focused prototype, not an autonomous model training project. It curr
 
 - [Ollama tool calling](https://docs.ollama.com/capabilities/tool-calling)
 - [Qwen2.5-Coder on Ollama](https://ollama.com/library/qwen2.5-coder)
+
+
+---
+
+## Basira-1B: original foundation-model research track
+
+The existing Basira coding agent remains a separate Ollama-backed application. The new **Basira-1B** track adds an original, randomly initialized Llama-style decoder-only model, tokenizer training utility, training baseline, and tests. **No 1B pretrained checkpoint exists yet.**
+
+Architecture: 20 layers, 2048 hidden width, 5632 FFN, 16 attention heads, 4 KV heads, 50,000 vocabulary entries, tied embeddings, 4096-token maximum context, RoPE, RMSNorm. Analytically calculated **1,004,259,328** parameters. Run `python scripts/count_parameters.py` and `pytest -q` after `pip install -e '.[test]'` to validate. Full parameter tensor verification requires sufficient RAM.
+
+Tokenizer: prepare legally usable bilingual corpus at `data/tokenizer_corpus.txt`, then run `python scripts/train_tokenizer.py --input data/tokenizer_corpus.txt --output artifacts/tokenizer`. The requested 50k vocabulary requires a sufficiently diverse corpus. Pretraining baseline: `accelerate launch scripts/train.py --tokenizer artifacts/tokenizer --data data/train.txt --output runs/basira-1b --steps 10000 --batch-size 1 --grad-accum 32`. The command is illustrative; distributed training infrastructure, validation, data provenance, and cloud execution remain outstanding. For tiny-model smoke testing, train a matching 256-vocabulary tokenizer and pass `--tiny --block-size 128 --steps 10`.
+
+Status: architecture and scripts committed; tokenizer untrained; cloud pretraining not started; tests included but not yet independently executed. No performance or benchmark claims.
