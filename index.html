@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0d14" />
+    <meta name="description" content="Basira is a real-time voice and vision assistant prototype." />
+    <title>Basira — Live AI</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="Basira home">
+          <span class="brand-mark" aria-hidden="true"><span></span></span>
+          <span class="brand-name">basira</span>
+          <span class="brand-tag">LIVE AI</span>
+        </a>
+        <div class="topbar-right">
+          <span class="privacy-pill"><span class="lock-icon" aria-hidden="true">⌑</span> Private session</span>
+          <a class="help-link" href="https://deepmind.google/models/project-astra/" target="_blank" rel="noreferrer">Inspired by real-time AI ↗</a>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="intro" aria-labelledby="page-title">
+          <div class="eyebrow"><span class="eyebrow-dot"></span> YOUR WORLD, IN CONTEXT</div>
+          <h1 id="page-title">See it. Ask about it.</h1>
+          <p>Talk naturally. Basira can listen, look through your camera, and help in the moment.</p>
+        </section>
+
+        <section class="stage-grid" aria-label="Live assistant workspace">
+          <div class="visual-stage" id="visual-stage">
+            <video id="camera-preview" autoplay muted playsinline aria-label="Live camera preview"></video>
+            <div class="camera-placeholder" id="camera-placeholder">
+              <div class="placeholder-orbit orbit-one"></div>
+              <div class="placeholder-orbit orbit-two"></div>
+              <div class="placeholder-eye"><span></span></div>
+              <div class="placeholder-copy">
+                <strong>Your view appears here</strong>
+                <span>Start a session to share your camera</span>
+              </div>
+            </div>
+            <div class="stage-topline">
+              <span class="stage-label"><span class="live-indicator" id="live-indicator"></span><span id="stage-status">STANDBY</span></span>
+              <span class="camera-label" id="camera-label">CAMERA OFF</span>
+            </div>
+            <div class="viewfinder viewfinder-tl"></div>
+            <div class="viewfinder viewfinder-tr"></div>
+            <div class="viewfinder viewfinder-bl"></div>
+            <div class="viewfinder viewfinder-br"></div>
+            <div class="stage-caption" id="stage-caption">Ready when you are.</div>
+            <div class="stage-footer">
+              <span><span class="tiny-dot"></span> AUDIO + VISION</span>
+              <span id="frame-status">FRAME STREAM PAUSED</span>
+            </div>
+          </div>
+
+          <aside class="conversation-panel" aria-label="Conversation">
+            <div class="conversation-heading">
+              <div>
+                <div class="eyebrow small-eyebrow">CONVERSATION</div>
+                <h2>Live with Basira</h2>
+              </div>
+              <button class="icon-button" id="clear-button" title="Clear conversation" aria-label="Clear conversation">↻</button>
+            </div>
+            <div class="conversation-log" id="conversation-log" aria-live="polite">
+              <div class="welcome-card" id="welcome-card">
+                <div class="welcome-symbol">✳</div>
+                <strong>A little more context.</strong>
+                <p>Point your camera at something and ask me about it. I’m here to help you explore.</p>
+                <span class="suggestion-chip">“What am I looking at?”</span>
+              </div>
+            </div>
+            <form class="text-form" id="text-form">
+              <label class="sr-only" for="text-input">Send a message</label>
+              <input id="text-input" type="text" placeholder="Type a message…" autocomplete="off" disabled />
+              <button id="send-button" type="submit" disabled aria-label="Send message">↑</button>
+            </form>
+            <div class="conversation-note"><span class="sparkle">✦</span> Natural conversation, no wake word needed</div>
+          </aside>
+        </section>
+
+        <section class="control-row" aria-label="Session controls">
+          <div class="control-copy">
+            <span class="control-label">SESSION CONTROLS</span>
+            <span class="control-subtitle" id="control-subtitle">Your camera and microphone are off.</span>
+          </div>
+          <div class="control-actions">
+            <button class="secondary-button" id="mute-button" disabled aria-label="Mute microphone"><span class="button-icon">◖</span><span>Mute</span></button>
+            <button class="secondary-button" id="camera-button" disabled aria-label="Turn camera off"><span class="button-icon">▣</span><span>Camera</span></button>
+            <button class="start-button" id="start-button"><span class="start-icon" id="start-icon">◉</span><span id="start-label">Start a conversation</span></button>
+          </div>
+        </section>
+
+        <footer class="page-footer">
+          <span>Basira is an independent prototype and is not affiliated with Google.</span>
+          <button class="text-button" id="privacy-button">How your media is used</button>
+        </footer>
+      </main>
+    </div>
+
+    <dialog id="privacy-dialog" class="privacy-dialog">
+      <div class="dialog-top"><span class="eyebrow small-eyebrow">YOUR PRIVACY</span><button id="close-dialog" class="icon-button" aria-label="Close">×</button></div>
+      <h2>Media is used for this live session</h2>
+      <p>When you start, your microphone audio and camera frames are streamed to Google’s Gemini Live API to generate responses. Basira does not save audio or video to disk. You can stop sharing at any time.</p>
+      <p>Your Gemini API key stays on the local server. The browser receives a short-lived, single-use session token.</p>
+      <button class="dialog-done" id="dialog-done">Got it</button>
+    </dialog>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
