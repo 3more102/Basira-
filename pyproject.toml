@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "basira-1b"
+version = "0.1.0"
+description = "Original 1B parameter bilingual language model research scaffold"
+requires-python = ">=3.10"
+dependencies = ["torch>=2.3", "transformers>=4.44,<5", "tokenizers>=0.19", "safetensors>=0.4"]
+
+[project.optional-dependencies]
+train = ["accelerate>=0.34", "sentencepiece>=0.2"]
+test = ["pytest>=8"]
+
+[tool.setuptools]
+py-modules = ["basira"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
