@@ -1,6 +1,6 @@
 {
-  "name": "basira-live-assistant",
-  "version": "0.1.0",
+  "name": "basira-coding-agent",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,9 +8,7 @@
     "build": "vite build",
     "preview": "vite preview"
   },
-  "dependencies": {
-    "@google/genai": "2.28.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "vite": "^7.1.0"
   },

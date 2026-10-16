@@ -1,384 +1,244 @@
-import { GoogleGenAI, Modality } from "@google/genai";
 import "./style.css";
 
-const MODEL = "gemini-3.8-live";
-const $ = (selector) => document.querySelector(selector);
-
 const ui = {
-  camera: $("#camera-preview"),
-  placeholder: $("#camera-placeholder"),
-  stage: $("#visual-stage"),
-  stageStatus: $("#stage-status"),
-  stageCaption: $("#stage-caption"),
-  cameraLabel: $("#camera-label"),
-  frameStatus: $("#frame-status"),
-  liveIndicator: $("#live-indicator"),
-  subtitle: $("#control-subtitle"),
-  start: $("#start-button"),
-  startLabel: $("#start-label"),
-  startIcon: $("#start-icon"),
-  mute: $("#mute-button"),
-  cameraToggle: $("#camera-button"),
-  textInput: $("#text-input"),
-  send: $("#send-button"),
-  textForm: $("#text-form"),
-  log: $("#conversation-log"),
-  welcome: $("#welcome-card"),
-  toast: $("#toast"),
-  privacy: $("#privacy-dialog"),
+  messages: document.querySelector("#messages"),
+  form: document.querySelector("#chat-form"),
+  prompt: document.querySelector("#prompt"),
+  send: document.querySelector("#send-button"),
+  activity: document.querySelector("#activity"),
+  health: document.querySelector("#connection-status"),
+  workspace: document.querySelector("#workspace-name"),
+  model: document.querySelector("#model-name"),
+  setupHint: document.querySelector("#setup-hint"),
+  refresh: document.querySelector("#refresh-status"),
+  newSession: document.querySelector("#new-session"),
+  checkResult: document.querySelector("#check-result"),
 };
 
-let session = null;
-let mediaStream = null;
-let audioContext = null;
-let audioSource = null;
-let worklet = null;
-let videoTimer = null;
-let cameraEnabled = false;
-let microphoneMuted = false;
-let nextAudioStart = 0;
-let scheduledAudio = new Set();
-let activeUserLine = null;
-let activeAssistantLine = null;
-let toastTimer = null;
+let history = [];
+let busy = false;
 
-function setStatus(state, message) {
-  ui.stageStatus.textContent = state.toUpperCase();
-  ui.stageCaption.textContent = message;
-  const active = state === "Live" || state === "Listening" || state === "Thinking";
-  ui.liveIndicator.classList.toggle("active", active);
-  ui.stage.classList.toggle("is-live", state === "Live" || state === "Listening");
+async function api(path, body) {
+  const response = await fetch(path, {
+    method: body ? "POST" : "GET",
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || `Request failed (${response.status})`);
+  return result;
 }
 
-function showToast(message) {
-  ui.toast.textContent = message;
-  ui.toast.classList.add("visible");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => ui.toast.classList.remove("visible"), 4200);
+function scrollToBottom() {
+  ui.messages.scrollTop = ui.messages.scrollHeight;
 }
 
-function addLine(kind, text = "") {
-  ui.welcome?.remove();
-  const row = document.createElement("div");
-  row.className = `message ${kind}`;
-  const badge = document.createElement("span");
-  badge.className = "message-badge";
-  badge.textContent = kind === "assistant" ? "B" : "YOU";
-  const body = document.createElement("p");
-  body.textContent = text;
-  row.append(badge, body);
-  ui.log.append(row);
-  ui.log.scrollTop = ui.log.scrollHeight;
-  return body;
+function addMessage(role, content, className = "") {
+  const article = document.createElement("article");
+  article.className = `message ${role === "user" ? "user-message" : "assistant-message"} ${className}`.trim();
+  const avatar = document.createElement("div");
+  avatar.className = "avatar";
+  avatar.textContent = role === "user" ? "YOU" : "B";
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  const paragraph = document.createElement("p");
+  paragraph.textContent = content;
+  bubble.append(paragraph);
+  article.append(avatar, bubble);
+  ui.messages.append(article);
+  scrollToBottom();
+  return article;
 }
 
-function resetTranscriptLines() {
-  activeUserLine = null;
-  activeAssistantLine = null;
+function setBusy(value) {
+  busy = value;
+  ui.send.disabled = value;
+  ui.prompt.disabled = value;
+  ui.send.textContent = value ? "…" : "↑";
+  ui.form.classList.toggle("is-busy", value);
 }
 
-function appendTranscript(kind, text) {
-  if (!text) return;
-  if (kind === "user") activeUserLine ??= addLine("user");
-  if (kind === "assistant") activeAssistantLine ??= addLine("assistant");
-  const target = kind === "user" ? activeUserLine : activeAssistantLine;
-  target.textContent += text;
-  ui.log.scrollTop = ui.log.scrollHeight;
-}
-
-function base64ToBytes(value) {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
-function bytesToBase64(bytes) {
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+function showActivity(items) {
+  if (!items?.length) return;
+  ui.activity.replaceChildren();
+  const title = document.createElement("strong");
+  title.textContent = "Repository inspection";
+  const list = document.createElement("ul");
+  for (const item of items) {
+    const row = document.createElement("li");
+    row.textContent = `${item.tool}: ${item.summary}`;
+    list.append(row);
   }
-  return btoa(binary);
+  ui.activity.append(title, list);
+  ui.activity.hidden = false;
+  scrollToBottom();
 }
 
-function resampleTo16k(samples, sourceRate) {
-  if (sourceRate === 16000) return samples;
-  const ratio = sourceRate / 16000;
-  const length = Math.floor(samples.length / ratio);
-  const output = new Float32Array(length);
-  for (let i = 0; i < length; i += 1) {
-    const start = Math.floor(i * ratio);
-    const end = Math.min(Math.floor((i + 1) * ratio), samples.length);
-    let sum = 0;
-    for (let j = start; j < end; j += 1) sum += samples[j];
-    output[i] = sum / Math.max(1, end - start);
-  }
-  return output;
+function renderProposal(proposal) {
+  const section = document.createElement("section");
+  section.className = "proposal-card";
+  section.dataset.id = proposal.id;
+  const heading = document.createElement("div");
+  heading.className = "proposal-heading";
+  const title = document.createElement("div");
+  const label = document.createElement("span");
+  label.className = "proposal-label";
+  label.textContent = "REVIEW REQUIRED";
+  const path = document.createElement("strong");
+  path.className = "proposal-path";
+  path.textContent = proposal.path;
+  title.append(label, path);
+  const state = document.createElement("span");
+  state.className = "proposal-state";
+  state.textContent = "Pending";
+  heading.append(title, state);
+  const reason = document.createElement("p");
+  reason.className = "proposal-reason";
+  reason.textContent = proposal.reason || "Basira proposed this file change.";
+  const diff = document.createElement("pre");
+  diff.className = "diff-view";
+  diff.textContent = proposal.diff;
+  const actions = document.createElement("div");
+  actions.className = "proposal-actions";
+  const reject = document.createElement("button");
+  reject.type = "button";
+  reject.className = "reject-button";
+  reject.textContent = "Reject";
+  const apply = document.createElement("button");
+  apply.type = "button";
+  apply.className = "apply-button";
+  apply.textContent = "Apply change";
+  apply.addEventListener("click", () => handleProposal(section, state, actions, "apply", proposal.id));
+  reject.addEventListener("click", () => handleProposal(section, state, actions, "reject", proposal.id));
+  actions.append(reject, apply);
+  section.append(heading, reason, diff, actions);
+  ui.messages.append(section);
+  scrollToBottom();
 }
 
-function floatToPcm16(samples) {
-  const pcm = new Int16Array(samples.length);
-  for (let i = 0; i < samples.length; i += 1) {
-    const sample = Math.max(-1, Math.min(1, samples[i]));
-    pcm[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-  }
-  return new Uint8Array(pcm.buffer);
-}
-
-async function startMicrophone() {
-  audioContext = new AudioContext();
-  await audioContext.audioWorklet.addModule(new URL("./pcm-worklet.js", import.meta.url));
-  const audioTrack = mediaStream.getAudioTracks()[0];
-  audioSource = audioContext.createMediaStreamSource(new MediaStream([audioTrack]));
-  worklet = new AudioWorkletNode(audioContext, "basira-pcm-capture");
-  const silentGain = audioContext.createGain();
-  silentGain.gain.value = 0;
-  audioSource.connect(worklet);
-  worklet.connect(silentGain).connect(audioContext.destination);
-  worklet.port.onmessage = ({ data }) => {
-    if (!session || microphoneMuted || !data?.samples) return;
-    const input = new Float32Array(data.samples);
-    const pcm = floatToPcm16(resampleTo16k(input, data.sampleRate));
-    session.sendRealtimeInput({
-      audio: { data: bytesToBase64(pcm), mimeType: "audio/pcm;rate=16000" },
-    });
-  };
-}
-
-async function startCamera() {
-  const cameraTrack = mediaStream.getVideoTracks()[0];
-  ui.camera.srcObject = new MediaStream([cameraTrack]);
-  await ui.camera.play();
-  cameraEnabled = true;
-  ui.placeholder.classList.add("hidden");
-  ui.cameraLabel.textContent = "CAMERA ON";
-  ui.frameStatus.textContent = "FRAME STREAM ACTIVE · 1 FPS";
-  const canvas = document.createElement("canvas");
-  const context = canvas.getContext("2d", { alpha: false });
-  videoTimer = setInterval(() => {
-    if (!session || !cameraEnabled || ui.camera.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
-    const scale = Math.min(1, 640 / ui.camera.videoWidth, 480 / ui.camera.videoHeight);
-    canvas.width = Math.max(1, Math.round(ui.camera.videoWidth * scale));
-    canvas.height = Math.max(1, Math.round(ui.camera.videoHeight * scale));
-    context.drawImage(ui.camera, 0, 0, canvas.width, canvas.height);
-    const base64 = canvas.toDataURL("image/jpeg", 0.72).split(",")[1];
-    session.sendRealtimeInput({ video: { data: base64, mimeType: "image/jpeg" } });
-  }, 1100);
-}
-
-function playAudioChunk(base64) {
-  if (!audioContext) return;
-  const bytes = base64ToBytes(base64);
-  const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 2));
-  const floatSamples = new Float32Array(pcm.length);
-  for (let i = 0; i < pcm.length; i += 1) floatSamples[i] = pcm[i] / 32768;
-  const buffer = audioContext.createBuffer(1, floatSamples.length, 24000);
-  buffer.copyToChannel(floatSamples, 0);
-  const source = audioContext.createBufferSource();
-  source.buffer = buffer;
-  source.connect(audioContext.destination);
-  const startAt = Math.max(audioContext.currentTime + 0.02, nextAudioStart);
-  source.start(startAt);
-  nextAudioStart = startAt + buffer.duration;
-  scheduledAudio.add(source);
-  source.onended = () => scheduledAudio.delete(source);
-}
-
-function stopQueuedAudio() {
-  for (const source of scheduledAudio) {
-    try { source.stop(); } catch { /* already stopped */ }
-  }
-  scheduledAudio.clear();
-  nextAudioStart = 0;
-}
-
-function handleModelMessage(message) {
-  const content = message.serverContent;
-  if (!content) return;
-  if (content.interrupted) {
-    stopQueuedAudio();
-    setStatus("Listening", "I’m listening.");
-    return;
-  }
-  const inputText = content.inputTranscription?.text;
-  const outputText = content.outputTranscription?.text;
-  if (inputText) appendTranscript("user", inputText);
-  if (outputText) appendTranscript("assistant", outputText);
-  const parts = content.modelTurn?.parts ?? [];
-  for (const part of parts) {
-    if (part.inlineData?.mimeType?.startsWith("audio/pcm") && part.inlineData.data) {
-      playAudioChunk(part.inlineData.data);
-    }
-    if (part.text && !outputText) appendTranscript("assistant", part.text);
-  }
-  if (content.turnComplete) {
-    resetTranscriptLines();
-    setStatus("Listening", "I’m listening.");
-  } else if (parts.length || outputText) {
-    setStatus("Thinking", "Putting it together…");
-  }
-}
-
-async function beginSession() {
-  ui.start.disabled = true;
-  ui.startLabel.textContent = "Connecting…";
+async function handleProposal(card, state, actions, action, id) {
+  actions.querySelectorAll("button").forEach((button) => { button.disabled = true; });
   try {
-    mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
-      video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
-    });
-    const response = await fetch("/api/token", { method: "POST" });
-    if (!response.ok) {
-      const detail = await response.json().catch(() => ({}));
-      throw new Error(detail.error || `Token request failed (${response.status})`);
-    }
-    const { token } = await response.json();
-    if (!token) throw new Error("The local server returned no session token.");
-    await startMicrophone();
-    const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: "v1beta" } });
-    session = await ai.live.connect({
-      model: MODEL,
-      config: {
-        responseModalities: [Modality.AUDIO],
-        inputAudioTranscription: {},
-        outputAudioTranscription: {},
-        sessionResumption: {},
-        systemInstruction: {
-          parts: [{ text: "You are Basira, a clear, friendly, concise visual voice assistant. Respond naturally in the language the user speaks. Use the live camera frames and conversation context to answer. If visual details are unclear, say so instead of guessing. Never claim to take actions outside this conversation." }],
-        },
-      },
-      callbacks: {
-        onopen: () => {
-          setStatus("Listening", "I’m listening. Show me what you want to explore.");
-        },
-        onmessage: handleModelMessage,
-        onerror: (event) => {
-          console.error("Live model error", event);
-          showToast(event.message || "The live model connection encountered an error.");
-        },
-        onclose: (event) => {
-          if (session) finishSession(false);
-          if (event?.reason) console.info("Live session closed:", event.reason);
-        },
-      },
-    });
-    await startCamera();
-    ui.start.classList.add("stop-button");
-    ui.startLabel.textContent = "End conversation";
-    ui.startIcon.textContent = "■";
-    ui.start.disabled = false;
-    ui.mute.disabled = false;
-    ui.cameraToggle.disabled = false;
-    ui.textInput.disabled = false;
-    ui.send.disabled = false;
-    ui.subtitle.textContent = "Mic and camera are active for this session.";
-    setStatus("Live", "I’m here. What would you like to know?");
-    resetTranscriptLines();
+    const result = await api(`/api/change/${action}`, { id });
+    state.textContent = action === "apply" ? "Applied" : "Rejected";
+    state.classList.add(action === "apply" ? "state-applied" : "state-rejected");
+    card.classList.add("proposal-complete");
+    actions.replaceChildren();
+    const detail = document.createElement("span");
+    detail.textContent = `${result.status}: ${result.path}`;
+    actions.append(detail);
   } catch (error) {
-    console.error(error);
-    await finishSession(false);
-    ui.start.disabled = false;
-    ui.startLabel.textContent = "Start a conversation";
-    ui.startIcon.textContent = "◉";
-    setStatus("Standby", "Ready when you are.");
-    showToast(error.message || "Could not start the live session.");
+    state.textContent = "Needs refresh";
+    state.classList.add("state-error");
+    const notice = document.createElement("p");
+    notice.className = "proposal-error";
+    notice.textContent = error.message;
+    card.append(notice);
+    actions.querySelectorAll("button").forEach((button) => { button.disabled = true; });
   }
 }
 
-async function finishSession(closeModel = true) {
-  const oldSession = session;
-  session = null;
-  if (closeModel && oldSession) {
-    try { oldSession.close(); } catch { /* session may already be closed */ }
+async function refreshHealth() {
+  ui.health.classList.add("checking");
+  try {
+    const status = await api("/api/health");
+    ui.workspace.textContent = status.workspace;
+    ui.model.textContent = status.model;
+    ui.setupHint.replaceChildren();
+    ui.setupHint.hidden = status.model_installed;
+    ui.health.replaceChildren();
+    const dot = document.createElement("span");
+    dot.className = "status-dot";
+    const label = document.createElement("span");
+    if (status.model_installed) {
+      label.textContent = "Local model ready";
+      ui.health.className = "status-pill ready";
+    } else if (status.ollama_available) {
+      label.textContent = "Model not downloaded";
+      ui.health.className = "status-pill missing-model";
+      ui.setupHint.append(document.createTextNode("Download the configured model: "));
+      const command = document.createElement("code");
+      command.textContent = `ollama pull ${status.model}`;
+      ui.setupHint.append(command);
+    } else {
+      label.textContent = "Ollama not connected";
+      ui.health.className = "status-pill offline";
+      ui.setupHint.textContent = "Install and start Ollama, then download the configured model. Setup steps are in the README.";
+    }
+    ui.health.append(dot, label);
+  } catch (error) {
+    ui.health.textContent = error.message;
+    ui.health.className = "status-pill offline";
+    ui.setupHint.hidden = false;
+    ui.setupHint.textContent = error.message;
   }
-  clearInterval(videoTimer);
-  videoTimer = null;
-  if (mediaStream) mediaStream.getTracks().forEach((track) => track.stop());
-  mediaStream = null;
-  if (audioSource) audioSource.disconnect();
-  audioSource = null;
-  if (worklet) {
-    worklet.port.onmessage = null;
-    worklet.disconnect();
-  }
-  worklet = null;
-  if (audioContext) await audioContext.close().catch(() => {});
-  audioContext = null;
-  stopQueuedAudio();
-  ui.camera.srcObject = null;
-  ui.placeholder.classList.remove("hidden");
-  ui.cameraLabel.textContent = "CAMERA OFF";
-  ui.frameStatus.textContent = "FRAME STREAM PAUSED";
-  ui.start.classList.remove("stop-button");
-  ui.startLabel.textContent = "Start a conversation";
-  ui.startIcon.textContent = "◉";
-  ui.start.disabled = false;
-  ui.mute.disabled = true;
-  ui.cameraToggle.disabled = true;
-  ui.textInput.disabled = true;
-  ui.send.disabled = true;
-  ui.mute.classList.remove("is-muted");
-  ui.mute.querySelector("span:last-child").textContent = "Mute";
-  ui.cameraToggle.querySelector("span:last-child").textContent = "Camera";
-  ui.subtitle.textContent = "Your camera and microphone are off.";
-  cameraEnabled = false;
-  microphoneMuted = false;
-  setStatus("Standby", "Ready when you are.");
 }
 
-ui.start.addEventListener("click", () => session ? finishSession() : beginSession());
-
-ui.mute.addEventListener("click", () => {
-  microphoneMuted = !microphoneMuted;
-  ui.mute.classList.toggle("is-muted", microphoneMuted);
-  ui.mute.querySelector("span:last-child").textContent = microphoneMuted ? "Unmute" : "Mute";
-  ui.subtitle.textContent = microphoneMuted ? "Microphone muted. Camera is still sharing." : "Mic and camera are active for this session.";
-});
-
-ui.cameraToggle.addEventListener("click", () => {
-  cameraEnabled = !cameraEnabled;
-  const track = mediaStream?.getVideoTracks()[0];
-  if (track) track.enabled = cameraEnabled;
-  ui.placeholder.classList.toggle("hidden", cameraEnabled);
-  ui.cameraLabel.textContent = cameraEnabled ? "CAMERA ON" : "CAMERA PAUSED";
-  ui.frameStatus.textContent = cameraEnabled ? "FRAME STREAM ACTIVE · 1 FPS" : "FRAME STREAM PAUSED";
-  ui.cameraToggle.querySelector("span:last-child").textContent = cameraEnabled ? "Camera" : "Resume";
-  ui.subtitle.textContent = cameraEnabled ? "Mic and camera are active for this session." : "Microphone active. Camera paused.";
-});
-
-ui.textForm.addEventListener("submit", (event) => {
+async function submitMessage(event) {
   event.preventDefault();
-  const text = ui.textInput.value.trim();
-  if (!text || !session) return;
-  addLine("user", text);
-  resetTranscriptLines();
-  session.sendRealtimeInput({ text });
-  ui.textInput.value = "";
-  setStatus("Thinking", "Let me think about that…");
-});
-
-$("#clear-button").addEventListener("click", () => {
-  ui.log.replaceChildren();
-  resetTranscriptLines();
-  if (!session) {
-    const welcome = document.createElement("div");
-    welcome.className = "welcome-card";
-    welcome.innerHTML = '<div class="welcome-symbol">✳</div><strong>A little more context.</strong><p>Point your camera at something and ask me about it. I’m here to help you explore.</p><span class="suggestion-chip">“What am I looking at?”</span>';
-    ui.log.append(welcome);
-    ui.welcome = welcome;
+  const message = ui.prompt.value.trim();
+  if (!message || busy) return;
+  addMessage("user", message);
+  ui.prompt.value = "";
+  ui.activity.hidden = true;
+  setBusy(true);
+  try {
+    const result = await api("/api/chat", { history, message });
+    history = result.history;
+    addMessage("assistant", result.reply);
+    showActivity(result.tool_log);
+    for (const proposal of result.proposals) renderProposal(proposal);
+  } catch (error) {
+    addMessage("assistant", error.message, "error-message");
+  } finally {
+    setBusy(false);
+    ui.prompt.focus();
   }
-});
+}
 
-$("#privacy-button").addEventListener("click", () => ui.privacy.showModal());
-$("#close-dialog").addEventListener("click", () => ui.privacy.close());
-$("#dialog-done").addEventListener("click", () => ui.privacy.close());
-ui.privacy.addEventListener("click", (event) => {
-  if (event.target === ui.privacy) ui.privacy.close();
-});
+async function runCheck(button) {
+  const check = button.dataset.check;
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "Running…";
+  ui.checkResult.hidden = false;
+  ui.checkResult.className = "check-result running";
+  ui.checkResult.textContent = `Running ${check}. This runs the selected project check locally.`;
+  try {
+    const result = await api("/api/checks", { check });
+    ui.checkResult.className = `check-result ${result.ok ? "check-ok" : "check-failed"}`;
+    const summary = document.createElement("strong");
+    summary.textContent = `${result.check}: ${result.ok ? "passed" : `failed (exit ${result.exit_code})`}`;
+    const command = document.createElement("code");
+    command.textContent = result.command;
+    const output = document.createElement("pre");
+    output.textContent = result.output || "No output.";
+    ui.checkResult.replaceChildren(summary, command, output);
+  } catch (error) {
+    ui.checkResult.className = "check-result check-failed";
+    ui.checkResult.textContent = error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
 
-window.addEventListener("beforeunload", () => {
-  clearInterval(videoTimer);
-  mediaStream?.getTracks().forEach((track) => track.stop());
-  session?.close();
+ui.form.addEventListener("submit", submitMessage);
+ui.prompt.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    ui.form.requestSubmit();
+  }
+  ui.prompt.style.height = "auto";
+  ui.prompt.style.height = `${Math.min(ui.prompt.scrollHeight, 180)}px`;
 });
+ui.refresh.addEventListener("click", refreshHealth);
+ui.newSession.addEventListener("click", () => {
+  history = [];
+  ui.messages.replaceChildren();
+  ui.activity.hidden = true;
+  addMessage("assistant", "New session started. Tell me what you want to inspect or change.");
+});
+document.querySelectorAll(".check-button").forEach((button) => button.addEventListener("click", () => runCheck(button)));
+
+refreshHealth();

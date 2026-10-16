@@ -1,71 +1,83 @@
-# Basira Live Assistant
+# Basira Coding Agent
 
-Basira is an independent, Astra-inspired real-time voice and vision assistant prototype. It streams browser microphone audio and camera frames to Gemini Live and plays the model's spoken responses. It uses an existing hosted multimodal model; it does not train or contain its own foundation-model weights.
+Basira is a local-first coding agent prototype for repository work. It uses an existing language model through Ollama; it does not train or include its own foundation-model weights, and it is not OpenAI's GPT-6 Astra.
 
-## What works in this starter
-
-- Live microphone input with interruption support.
-- Camera preview and JPEG frame streaming at about one frame per second.
-- Spoken model replies, visible input/output transcripts, and optional typed prompts.
-- Mute, pause-camera, clear conversation, and end-session controls.
-- A local token issuer that keeps the long-lived API key out of browser code and requests one-use Gemini Live tokens.
-- Privacy notice before media sharing; this app does not write mic or camera data to disk.
+The agent loop can list, read, and search project files. It can prepare complete file changes as reviewable diffs. **Proposed changes remain staged until you press Apply.** The model cannot execute arbitrary shell commands. The UI offers a small allowlist of checks that you start yourself.
 
 ## Requirements
 
 - Python 3.10 or newer.
-- Node.js 20 or newer.
-- A Gemini API key with access to Gemini Live. API usage and billing are governed by the provider account and current API terms.
-- A modern browser that supports microphone, camera, Web Audio, AudioWorklet, and WebSocket APIs.
+- Node.js 20 or newer for building the interface.
+- [Ollama](https://ollama.com/download) running on the same computer by default.
+- One coding model downloaded in Ollama. The default is `qwen2.5-coder:7b`; smaller `3b` and `1.5b` variants are available for machines with less memory.
 
-Create a Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey). Keep it on the local server; never add it to `src/`, `index.html`, or a public repository.
+The Ollama model page lists Qwen2.5-Coder sizes from 0.5B to 32B; the listed 7B download is 4.7 GB. Actual memory use depends on runtime settings and context size. See the [model page](https://ollama.com/library/qwen2.5-coder).
 
-## Run on Windows PowerShell
+## Quick start on Windows PowerShell
 
-Open a terminal in this folder:
+In a terminal, download a model once:
+
+```powershell
+ollama pull qwen2.5-coder:7b
+```
+
+In another terminal, open this folder and build the UI:
 
 ```powershell
 npm install
 npm run build
-Copy-Item .env.example .env
-notepad .env
-```
-
-Add the key after `GEMINI_API_KEY=` in `.env`, save the file, then run:
-
-```powershell
 py server.py
 ```
 
-Open `http://127.0.0.1:8000`. Press **Start a conversation** and allow camera/microphone permissions.
+Open `http://127.0.0.1:8000`. Ollama must remain running while you use Basira.
 
-For frontend development, run `py server.py` in one terminal and `npm run dev` in another; Vite serves the interface on `http://127.0.0.1:5173` and forwards `/api/token` to the local server.
+For development, run `py server.py` and `npm run dev` in separate terminals. Vite serves the interface at `http://127.0.0.1:5173` and forwards API requests to Basira on port 8000.
+
+## Use Basira on another project
+
+Set `BASIRA_WORKSPACE` to the repository folder before starting the server. Build and launch Basira from this project folder:
+
+```powershell
+$env:BASIRA_WORKSPACE = 'C:\path\to\your\repository'
+py server.py
+```
+
+You can change the model or Ollama endpoint in `.env` using the values from `.env.example`. The endpoint defaults to `http://127.0.0.1:11434`. If you point it at another computer or a hosted endpoint, code snippets used for inference are sent there.
+
+To use a smaller local model:
+
+```powershell
+ollama pull qwen2.5-coder:3b
+$env:BASIRA_MODEL = 'qwen2.5-coder:3b'
+py server.py
+```
+
+## Workspace safety
+
+- Basira binds to loopback addresses only. It refuses a public network binding.
+- File tools stay inside the selected workspace and block parent traversal and symlinks that resolve outside it.
+- File tools skip `.git`, dependencies, generated directories, credentials, `.env`, and common key files. Text reads are capped at 32 KB per file.
+- The model can inspect and search text, then stage a diff. It cannot directly write files. Applying a staged diff checks that the original file has not changed since review.
+- The agent has no shell tool. The UI's Python tests, frontend build, and Git diff check are fixed commands. Running tests/build can execute code in the repository, so review the project before starting those checks.
+- Chat history and pending proposals stay in memory in the browser/server process; Basira does not save session history to disk.
+- Source snippets are sent to the configured Ollama endpoint. The default Ollama endpoint is local; a custom endpoint may receive project code.
+
+These controls reduce risk but do not replace reviewing model output and project changes.
 
 ## Run tests
 
 ```powershell
 py -m unittest discover -s tests -v
+npm run build
 ```
 
-The tests validate the local token issuer without making a Gemini API request. A live audio/video session requires a valid API key and real browser permissions.
+Tests cover workspace boundary checks, secret/generated-file exclusions, staged-only edits, stale-file detection, and the model tool-call loop using a mocked model client.
 
-## Security and scope
+## Current scope
 
-- `server.py` binds to `127.0.0.1` by default. Keep it local; do not expose this unauthenticated token endpoint to the internet or a shared network.
-- The browser receives an ephemeral token. It is limited to one session start, a fixed Live model, and the audio-response mode; it expires quickly.
-- The app sends audio and camera frames to Google's Gemini Live API only while a session is active. Stopping the session turns off the local media tracks. Provider processing and retention are governed by the provider's current terms and settings.
-- This is a prototype, not Google's Project Astra and not affiliated with Google. It does not yet have durable cross-session memory, external tools, glasses support, user accounts, or production-grade server authentication.
+Basira is a focused prototype, not an autonomous model training project. It currently has no multi-agent orchestration, persistent memory, GitHub write access, browser control, or arbitrary terminal execution. Model reasoning and tool-call reliability depend on the selected local model.
 
-## Next development steps
+## References
 
-1. Add explicit, user-controlled memory with review and deletion.
-2. Add document and image context, with a visible list of what was shared.
-3. Add selected tools behind confirmation for consequential actions.
-4. Add a provider interface and evaluate local/open-weight models for offline modes.
-5. Add authentication, quotas, deployment hardening, and a measured evaluation set before any public launch.
-
-## Official references
-
-- [Google DeepMind: Project Astra](https://deepmind.google/models/project-astra/)
-- [Gemini Live API overview](https://ai.google.dev/gemini-api/docs/live-api)
-- [Gemini Live API: ephemeral tokens](https://ai.google.dev/gemini-api/docs/live-api/ephemeral-tokens)
+- [Ollama tool calling](https://docs.ollama.com/capabilities/tool-calling)
+- [Qwen2.5-Coder on Ollama](https://ollama.com/library/qwen2.5-coder)
