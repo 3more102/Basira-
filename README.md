@@ -94,3 +94,15 @@ Architecture: 20 layers, 2048 hidden width, 5632 FFN, 16 attention heads, 4 KV h
 Tokenizer: prepare legally usable bilingual corpus at `data/tokenizer_corpus.txt`, then run `python scripts/train_tokenizer.py --input data/tokenizer_corpus.txt --output artifacts/tokenizer`. The requested 50k vocabulary requires a sufficiently diverse corpus. Pretraining baseline: `accelerate launch scripts/train.py --tokenizer artifacts/tokenizer --data data/train.txt --output runs/basira-1b --steps 10000 --batch-size 1 --grad-accum 32`. The command is illustrative; distributed training infrastructure, validation, data provenance, and cloud execution remain outstanding. For tiny-model smoke testing, train a matching 256-vocabulary tokenizer and pass `--tiny --block-size 128 --steps 10`.
 
 Status: architecture and scripts committed; tokenizer untrained; cloud pretraining not started; tests included but not yet independently executed. No performance or benchmark claims.
+
+### Basira-1B data preparation (October 2026)
+
+The original-model track now includes `scripts/audit_corpus.py`, `scripts/prepare_corpus.py`, `tests/test_data_pipeline.py`, and `docs/TRAINING_PLAN.md`. Input format is JSONL with nonempty `text`, `source`, and `license` string fields. Example commands:
+
+```bash
+python scripts/audit_corpus.py data/raw.jsonl
+python scripts/prepare_corpus.py --input data/raw.jsonl --output data/processed
+python scripts/train_tokenizer.py --input data/processed/train.txt --output artifacts/tokenizer
+```
+
+Do not mistake string-valued license metadata for actual legal clearance. Run tests and verify CI before any cloud training. The 1B model is **untrained**.
